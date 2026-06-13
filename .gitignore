@@ -1,0 +1,23 @@
+# Maxfiy va shaxsiy ma'lumotlar (Eng muhimi!)
+.env
+.env.local
+.env.*.local
+config.json
+credentials.json
+
+# Higgsfield MCP va Node konfiguratsiyalari (agar npm ishlatayotgan bo'lsangiz)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Brauzer va Tizim fayllari
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
