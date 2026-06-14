@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VOID HUNTER — 100% Fixed</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; font-family: 'Courier New', monospace; overflow: hidden; }
+  #canvas { display: block; width: 100vw; height: 100vh; }
+
+  /* HUD */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+  #crosshair {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 20px; height: 20px;
+  }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: rgba(0,255,150,0.9); }
+  #crosshair::before { width: 2px; height: 20px; left: 9px; top: 0; }
+  #crosshair::after  { width: 20px; height: 2px; top: 9px; left: 0; }
+
+  #health-bar-wrap { position: absolute; bottom: 30px; left: 30px; display: flex; flex-direction: column; gap: 6px; }
+  .bar-label { color: #aaa; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; }
+  .bar-outer { width: 180px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; }
+  #health-fill { height: 100%; background: linear-gradient(90deg, #00ff96, #00d4ff); border-radius: 4px; }
+  #ammo-fill  { height: 100%; background: linear-gradient(90deg, #ffb300, #ff6b00); border-radius: 4px; }
+
+  #score-panel { position: absolute; top: 20px; right: 30px; text-align: right; }
+  #score-val { color: #00ff96; font-size: 36px; font-weight: 700; }
+
+  #wave-panel { position: absolute; top: 20px; left: 30px; }
+  #wave-val { color: #ff4060; font-size: 28px; font-weight: 700; }
+  #enemies-left { color: #888; font-size: 12px; margin-top: 4px; }
+
+  #ammo-count { position: absolute; bottom: 30px; right: 30px; text-align: right; }
+  #ammo-num { color: #ffb300; font-size: 32px; font-weight: 700; }
+  #ammo-total { color: #555; font-size: 16px; }
+  #reload-hint { color: #ff4060; font-size: 11px; letter-spacing: 2px; min-height: 16px; }
+
+  #hit-flash { position: absolute; inset: 0; background: rgba(255,0,0,0.4); opacity: 0; pointer-events: none; transition: opacity 0.05s; }
+  #shoot-flash { position: absolute; inset: 0; background: rgba(255,220,100,0.06); opacity: 0; pointer-events: none; }
+
+  .screen {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; z-index: 100;
+    background: rgba(0,0,0,0.85); backdrop-filter: blur(6px);
+  }
+  .screen h1 { font-size: 64px; letter-spacing: 10px; color: #00ff96; margin-bottom: 8px; }
+  .screen .sub { color: #555; font-size: 12px; letter-spacing: 4px; margin-bottom: 50px; }
+  .btn {
+    padding: 14px 48px; border: 1px solid #00ff96; background: transparent;
+    color: #00ff96; font-family: 'Courier New', monospace; font-size: 14px;
+    letter-spacing: 3px; cursor: pointer; transition: all 0.2s; margin: 8px;
+  }
+  .btn:hover { background: #00ff96; color: #000; }
+
+  #wave-announce {
+    position: fixed; top: 40%; left: 50%; transform: translateX(-50%);
+    font-size: 42px; color: #ff4060; letter-spacing: 8px; pointer-events: none; z-index: 50;
+    opacity: 0; transition: opacity 0.4s;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="hud" style="display:none;">
+  <div id="crosshair"></div>
+  <div id="hit-flash"></div>
+  <div id="shoot-flash"></div>
+
+  <div id="wave-panel">
+    <div class="bar-label">WAVE</div>
+    <div id="wave-val">1</div>
+    <div id="enemies-left">0 ENEMIES</div>
+  </div>
+
+  <div id="score-panel">
+    <div id="score-val">0</div>
+    <div class="bar-label">SCORE</div>
+  </div>
+
+  <div id="health-bar-wrap">
+    <div class="bar-label">HEALTH</div>
+    <div class="bar-outer"><div id="health-fill" style="width:100%"></div></div>
+    <div class="bar-label" style="margin-top:10px;">AMMO</div>
+    <div class="bar-outer"><div id="ammo-fill" style="width:100%"></div></div>
+  </div>
+
+  <div id="ammo-count">
+    <div id="reload-hint"></div>
+    <div><span id="ammo-num">30</span><span id="ammo-total"> / 180</span></div>
+    <div class="bar-label">AMMO</div>
+  </div>
+</div>
+
+<div id="wave-announce"></div>
+
+<div class="screen" id="start-screen">
+  <h1>VOID HUNTER</h1>
+  <div class="sub">3D FIRST-PERSON SHOOTER</div>
+  <button class="btn" onclick="startGame()">▶ PLAY</button>
+</div>
+
+<div class="screen" id="game-over-screen" style="display:none;">
+  <h1 style="color:#ff4060;">VOID</h1>
+  <div class="sub">YOU HAVE BEEN ELIMINATED</div>
+  <button class="btn" onclick="restartGame()">↺ RETRY</button>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const state = {
+  running: false, paused: false,
+  health: 100, score: 0, wave: 1,
+  ammo: 30, maxAmmo: 30, totalAmmo: 180,
+  reloading: false, reloadTimer: 0, reloadDuration: 1.2,
+  enemies: [], bullets: [], pickups: [],
+  shootCooldown: 0,
+  waveEnemiesTotal: 0, waveEnemiesSpawned: 0,
+  bossSpawned: false, bossDefeated: false, waveComplete: false,
+  spawnTimer: 0, spawnInterval: 2.0
+};
+
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.setClearColor(0x050510);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x050510, 0.035);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 200);
+camera.position.set(0, 1.7, 0);
+const playerBody = { pos: new THREE.Vector3(0, 1.7, 0), yaw: 0, pitch: 0 };
+
+let locked = false;
+canvas.addEventListener('click', () => { if (state.running && !state.paused) canvas.requestPointerLock(); });
+document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === canvas; });
+document.addEventListener('mousemove', e => {
+  if (!locked || !state.running || state.paused) return;
+  playerBody.yaw -= e.movementX * 0.002;
+  playerBody.pitch -= e.movementY * 0.002;
+  playerBody.pitch = Math.max(-Math.PI/2.5, Math.min(Math.PI/2.5, playerBody.pitch));
+});
+
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'KeyR' && state.running && !state.paused) tryReload();
+});
+document.addEventListener('keyup', e => keys[e.code] = false);
+
+let mouseDown = false;
+document.addEventListener('mousedown', e => { if (e.button === 0) mouseDown = true; });
+document.addEventListener('mouseup',   e => { if (e.button === 0) mouseDown = false; });
+
+const ambient = new THREE.AmbientLight(0x111133, 0.8);
+scene.add(ambient);
+const dirLight = new THREE.DirectionalLight(0x4060ff, 0.6);
+dirLight.position.set(10, 20, 10);
+scene.add(dirLight);
+
+// Arena
+const floorGeo = new THREE.PlaneGeometry(80, 80);
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x0a0a18 });
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI / 2;
+scene.add(floor);
+scene.add(new THREE.GridHelper(80, 40, 0x00ff96, 0x001122));
+
+// Gun
+const weaponGroup = new THREE.Group();
+camera.add(weaponGroup);
+scene.add(camera);
+const gunMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e });
+const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.5, 8), gunMat);
+barrel.rotation.x = Math.PI / 2; barrel.position.set(0.18, -0.15, -0.45);
+weaponGroup.add(barrel);
+
+// Enemy Types
+const ENEMY_TYPES = [
+  { color: 0xff2040, speed: 3.0, hp: 2, size: [1.2, 2.0, 1.2], score: 100, isBoss: false },
+  { color: 0xff6000, speed: 2.2, hp: 4, size: [1.5, 2.4, 1.5], score: 150, isBoss: false }
+];
+
+function spawnEnemy() {
+  if (state.waveEnemiesSpawned >= state.waveEnemiesTotal) return;
+  const type = ENEMY_TYPES[Math.floor(Math.random() * ENEMY_TYPES.length)];
+  const angle = Math.random() * Math.PI * 2;
+  createEnemyMesh(type, angle, 28);
+  state.waveEnemiesSpawned++;
+}
+
+function spawnBoss() {
+  state.bossSpawned = true;
+  const bossType = {
+    color: 0xaa00ff,
+    speed: 2.5,
+    hp: 10 + (state.wave * 10), // Boss joni har wave ortadi
+    size: [3.0, 4.5, 3.0],
+    score: 500,
+    isBoss: true
+  };
+  createEnemyMesh(bossType, Math.random() * Math.PI * 2, 30);
+
+  const ann = document.getElementById('wave-announce');
+  ann.textContent = 'BOSS STAGE'; ann.style.opacity = '1';
+  setTimeout(() => ann.style.opacity = '0', 1500);
+}
+
+function createEnemyMesh(type, angle, dist) {
+  const group = new THREE.Group();
+  group.position.set(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
+
+  const mat = new THREE.MeshStandardMaterial({ color: type.color, emissive: type.color, emissiveIntensity: 0.5 });
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(...type.size), mat);
+  mesh.position.y = type.size[1] / 2;
+  group.add(mesh);
+
+  const barW = type.isBoss ? 2.5 : 1.0;
+  const hbBg = new THREE.Mesh(new THREE.PlaneGeometry(barW, 0.1), new THREE.MeshBasicMaterial({ color: 0x222222 }));
+  hbBg.position.set(0, type.size[1] + 0.3, 0); group.add(hbBg);
+
+  const hbFill = new THREE.Mesh(new THREE.PlaneGeometry(barW, 0.1), new THREE.MeshBasicMaterial({ color: type.isBoss ? 0xff00ff : 0x00ff96 }));
+  hbFill.position.set(0, type.size[1] + 0.3, 0.01); group.add(hbFill);
+
+  scene.add(group);
+  state.enemies.push({ group, hbFill, type, hp: type.hp, maxHp: type.hp, speed: type.speed, barW });
+  updateScoreHUD();
+}
+
+function dropPackage(pos) {
+  const group = new THREE.Group();
+  group.position.copy(pos).setY(0.5);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x00ff96, emissive: 0x00ff96 }));
+  group.add(mesh);
+  scene.add(group);
+  state.pickups.push({ group });
+}
+
+function tryReload() {
+  if (state.reloading || state.totalAmmo <= 0 || state.ammo === state.maxAmmo) return;
+  state.reloading = true;
+  state.reloadTimer = state.reloadDuration;
+  document.getElementById('reload-hint').textContent = 'RELOADING...';
+}
+
+function shoot() {
+  if (state.ammo <= 0) { tryReload(); return; }
+  if (state.shootCooldown > 0 || state.reloading) return;
+
+  state.ammo--;
+  state.shootCooldown = 0.15;
+  updateAmmoHUD();
+
+  const b = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), new THREE.MeshBasicMaterial({ color: 0x00ffcc }));
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  b.position.copy(camera.position).addScaledVector(dir, 0.4);
+  scene.add(b);
+  state.bullets.push({ mesh: b, vel: dir.multiplyScalar(45), life: 1.5 });
+
+  const sf = document.getElementById('shoot-flash');
+  sf.style.opacity = '1'; setTimeout(() => sf.style.opacity = '0', 40);
+}
+
+function updateHealthHUD() { document.getElementById('health-fill').style.width = Math.max(0, state.health) + '%'; }
+function updateAmmoHUD() {
+  document.getElementById('ammo-num').textContent = state.ammo;
+  document.getElementById('ammo-total').textContent = ' / ' + state.totalAmmo;
+  document.getElementById('ammo-fill').style.width = (state.ammo / state.maxAmmo * 100) + '%';
+}
+function updateScoreHUD() {
+  document.getElementById('score-val').textContent = state.score;
+  document.getElementById('wave-val').textContent = state.wave;
+  document.getElementById('enemies-left').textContent = state.enemies.length + ' ENEMIES';
+}
+
+function startWave(w) {
+  state.wave = w;
+  state.waveEnemiesTotal = 4 + w; // 1-wave da jami 5 ta oddiy dushman chiqadi
+  state.waveEnemiesSpawned = 0;
+  state.bossSpawned = false;
+  state.bossDefeated = false;
+  state.waveComplete = false;
+  state.spawnTimer = 0;
+
+  const ann = document.getElementById('wave-announce');
+  ann.textContent = 'WAVE ' + w; ann.style.opacity = '1';
+  setTimeout(() => ann.style.opacity = '0', 1500);
+  updateScoreHUD();
+}
+
+const clock = new THREE.Clock();
+function gameLoop() {
+  requestAnimationFrame(gameLoop);
+  if (!state.running || state.paused) return;
+
+  const dt = Math.min(clock.getDelta(), 0.1);
+
+  if (state.shootCooldown > 0) state.shootCooldown -= dt;
+
+  // Qayta o'qlash taymeri (TUZATILDI)
+  if (state.reloading) {
+    state.reloadTimer -= dt;
+    if (state.reloadTimer <= 0) {
+      const needed = state.maxAmmo - state.ammo;
+      const toGive = Math.min(needed, state.totalAmmo);
+      state.ammo += toGive;
+      state.totalAmmo -= toGive;
+      state.reloading = false;
+      document.getElementById('reload-hint').textContent = '';
+      updateAmmoHUD();
+    }
+  }
+
+  if (mouseDown && locked) shoot();
+
+  // Harakat
+  const speed = keys['ShiftLeft'] ? 6.5 : 4.0;
+  const forward = new THREE.Vector3(-Math.sin(playerBody.yaw), 0, -Math.cos(playerBody.yaw));
+  const right = new THREE.Vector3(Math.cos(playerBody.yaw), 0, -Math.sin(playerBody.yaw));
+  const move = new THREE.Vector3();
+  if (keys['KeyW']) move.addScaledVector(forward, speed * dt);
+  if (keys['KeyS']) move.addScaledVector(forward, -speed * dt);
+  if (keys['KeyA']) move.addScaledVector(right, -speed * dt);
+  if (keys['KeyD']) move.addScaledVector(right,  speed * dt);
+  playerBody.pos.add(move);
+
+  camera.position.copy(playerBody.pos);
+  camera.rotation.order = 'YXZ'; camera.rotation.y = playerBody.yaw; camera.rotation.x = playerBody.pitch;
+
+  // Qutilarni yig'ish (Aptechka / O'q)
+  for (let i = state.pickups.length - 1; i >= 0; i--) {
+    const p = state.pickups[i];
+    p.group.rotation.y += dt * 2;
+    if (p.group.position.distanceTo(playerBody.pos) < 1.8) {
+      state.totalAmmo += 90; // Boss o'lganda +90 ta o'q
+      state.health = 100;    // Jon 100% to'ladi
+      updateHealthHUD(); updateAmmoHUD();
+      scene.remove(p.group); state.pickups.splice(i, 1);
+    }
+  }
+
+  // O'qlar parvozi va dushmanga tegishi
+  for (let i = state.bullets.length - 1; i >= 0; i--) {
+    const b = state.bullets[i];
+    b.mesh.position.addScaledVector(b.vel, dt);
+    b.life -= dt;
+
+    if (b.life <= 0) { scene.remove(b.mesh); state.bullets.splice(i, 1); continue; }
+
+    for (let j = state.enemies.length - 1; j >= 0; j--) {
+      const e = state.enemies[j];
+      if (b.mesh.position.distanceTo(e.group.position) < e.type.size[0]) {
+        e.hp -= 1;
+        scene.remove(b.mesh); state.bullets.splice(i, 1);
+        e.hbFill.scale.x = Math.max(0, e.hp / e.maxHp);
+
+        if (e.hp <= 0) {
+          if (e.type.isBoss) { dropPackage(e.group.position.clone()); state.bossDefeated = true; }
+          scene.remove(e.group); state.enemies.splice(j, 1);
+          state.score += e.type.score; updateScoreHUD();
+        }
+        break;
+      }
+    }
+  }
+
+  // Dushmanlar harakati va hujumi
+  for (let i = state.enemies.length - 1; i >= 0; i--) {
+    const e = state.enemies[i];
+    const dir = playerBody.pos.clone().sub(e.group.position).setY(0).normalize();
+    e.group.position.addScaledVector(dir, e.speed * dt);
+    e.group.lookAt(playerBody.pos.x, e.group.position.y, playerBody.pos.z);
+    e.hbFill.lookAt(camera.position);
+
+    if (e.group.position.distanceTo(playerBody.pos) < (e.type.isBoss ? 3.0 : 1.8)) {
+      state.health -= (e.type.isBoss ? 40 : 20) * dt;
+      updateHealthHUD();
+      if (state.health <= 0) { gameOver(); return; }
+    }
+  }
+
+  // Wave boshqaruvi (TUZATILDI)
+  if (!state.waveComplete) {
+    if (state.waveEnemiesSpawned < state.waveEnemiesTotal) {
+      state.spawnTimer -= dt;
+      if (state.spawnTimer <= 0) { spawnEnemy(); state.spawnTimer = state.spawnInterval; }
+    } else if (state.enemies.length === 0 && !state.bossSpawned) {
+      spawnBoss();
+    }
+
+    if (state.bossSpawned && state.bossDefeated && state.enemies.length === 0 && state.pickups.length === 0) {
+      state.waveComplete = true;
+      setTimeout(() => startWave(state.wave + 1), 2000);
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+window.startGame = function() {
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('hud').style.display = 'block';
+  state.health = 100; state.score = 0; state.ammo = 30; state.totalAmmo = 180;
+  playerBody.pos.set(0, 1.7, 0); playerBody.yaw = 0; playerBody.pitch = 0;
+  state.running = true; clock.start(); canvas.requestPointerLock();
+  startWave(1); updateHealthHUD(); updateAmmoHUD();
+};
+
+window.restartGame = function() {
+  document.getElementById('game-over-screen').style.display = 'none';
+  state.enemies.forEach(e => scene.remove(e.group));
+  state.bullets.forEach(b => scene.remove(b.mesh));
+  state.pickups.forEach(p => scene.remove(p.group));
+  state.enemies = []; state.bullets = []; state.pickups = [];
+  startGame();
+};
+
+function gameOver() {
+  state.running = false; document.exitPointerLock();
+  document.getElementById('hud').style.display = 'none';
+  document.getElementById('game-over-screen').style.display = 'flex';
+}
+
+gameLoop();
+</script>
+</body>
+</html>
