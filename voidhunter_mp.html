@@ -464,6 +464,42 @@ function spawnBoss(){
 // ─────────────────────────────────────────────────────────────────────────────
 //  WAVE MANAGEMENT
 // ─────────────────────────────────────────────────────────────────────────────
+window.openSoloShop = function() {
+    gs.shopOpen = true;
+    gs.myReady = false;
+    gs.paused = true; // <--- O'YINNI TO'XTATISH
+    document.exitPointerLock(); // <--- SICHQONCHANI OZOD QILISH (TUGMALARNI BOSISH UCHUN)
+    document.getElementById('shop').style.display = 'flex';
+    document.getElementById('sh-cred').textContent = P.credits;
+
+    const grid = document.getElementById('sh-grid');
+    grid.innerHTML = `
+        <div class="sh-card" onclick="buyItem('hp')"><h3>HEALTH REPAIR</h3><p>Restore full health</p><div class="cost">⬡ 50 VC</div></div>
+        <div class="sh-card" onclick="buyItem('armor')"><h3>ARMOR UPGRADE</h3><p>Give +25 armor</p><div class="cost">⬡ 75 VC</div></div>
+        <div class="sh-card" onclick="buyItem('damage')"><h3>DAMAGE BOOSTER</h3><p>Increase gun damage</p><div class="cost">⬡ 120 VC</div></div>
+    `;
+};
+window.buyItem = function(type) {
+    if(type === 'hp' && P.credits >= 50) { P.hp = P.maxHp; P.credits -= 50; }
+    if(type === 'armor' && P.credits >= 75) { P.armor = Math.min(P.maxArmor, P.armor + 25); P.credits -= 75; }
+    if(type === 'damage' && P.credits >= 120) { P.damage += 0.5; P.credits -= 120; }
+    document.getElementById('sh-cred').textContent = P.credits;
+    document.getElementById('cred-hud').textContent = P.credits;
+};
+
+// Eski shopReady funktsiyasini almashtiramiz yoki qayta yozamiz
+const originalShopReady = window.shopReady;
+window.shopReady = function() {
+    if(gs.solo) {
+        gs.shopOpen = false;
+        gs.paused = false; // <--- PAUZANI O'CHIRISH
+        document.getElementById('shop').style.display = 'none';
+        canvas.requestPointerLock(); // <--- SICHQONCHANI KOPYUTERGA QAYTA BOG'LASH
+        startWave(gs.wave + 1);
+    } else {
+        if(typeof originalShopReady === 'function') originalShopReady();
+    }
+};
 function startWave(n){
   gs.wave=n; gs.phase='minion'; gs.pkgCollected=false; gs.megaPkg=null;
   bossRef=null;
@@ -751,15 +787,20 @@ function renderReadyRow(){
 
 function checkAllReady(){
   const allPeers=Object.keys(NET.getPeers()).every(id=>peerReady[id]);
-  if(gs.myReady && (allPeers || gs.solo)) closeShop();
+  if(gs.solo) {
+    if(gs.myReady) {
+        nextWave();
+    }
+    return;
+}
 }
 
 function closeShop(){
   gs.shopOpen=false;
   document.getElementById('shop').style.display='none';
   Object.keys(peerReady).forEach(k=>delete peerReady[k]);
-  setTimeout(()=>{if(gs.running)canvas.requestPointerLock();},200);
-  setTimeout(()=>startWave(gs.wave+1),800);
+  setTimeout(()=>{if(gs.running)canvas.requestPointerLock();},20000);
+  setTimeout(()=>startWave(gs.wave+1),80000);
 }
 
 // shopReady exposed globally below
